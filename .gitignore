@@ -25,3 +25,32 @@ replay_pid*
 
 .idea/
 *.iml
+
+# IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# macOS
+.DS_Store
+
+# Java / Gradle
+.gradle/
+build/
+target/
+
+# Node
+node_modules/
+.next/
+out/
+
+# Environment
+.env
+.env.*
+
+# Logs
+*.log
+
+# VS Code
+.vscode/
