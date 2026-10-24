@@ -1,8 +1,10 @@
 package com.skillnova.backend.controller;
 
 import com.skillnova.backend.dto.RegisterRequest;
+import com.skillnova.backend.dto.RegisterResponse;
 import com.skillnova.backend.service.UserService;
-import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -13,14 +15,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/auth")
 public class AuthController {
 
-    @Autowired
-    private UserService userService;
+    private final UserService userService;
+
+    public AuthController(UserService userService) {
+        this.userService = userService;
+    }
 
     @PostMapping("/register")
-    public ResponseEntity<String> register(
-            @RequestBody RegisterRequest request) {
-
-        return ResponseEntity.ok(
-                userService.register(request));
+    public ResponseEntity<RegisterResponse> register(@Valid @RequestBody RegisterRequest request) {
+        RegisterResponse response = userService.register(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 }
