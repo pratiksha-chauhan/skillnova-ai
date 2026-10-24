@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: skillnova-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: skillnova
+      POSTGRES_USER: ${DB_USERNAME:-skillnova}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-skillnova}
+    ports:
+      - "${DB_HOST_PORT:-5433}:5432"
+    volumes:
+      - skillnova-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-skillnova} -d skillnova"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  skillnova-postgres-data:
