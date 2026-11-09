@@ -3,6 +3,7 @@ package com.skillnova.backend.controller;
 import com.skillnova.backend.dto.RoadmapGenerationRequest;
 import com.skillnova.backend.dto.RoadmapResponse;
 import com.skillnova.backend.dto.RoadmapSummaryResponse;
+import com.skillnova.backend.dto.TaskStatusUpdateRequest;
 import com.skillnova.backend.entity.User;
 import com.skillnova.backend.service.RoadmapService;
 import jakarta.validation.Valid;
@@ -10,6 +11,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -64,5 +66,23 @@ public class RoadmapController {
             @PathVariable UUID id
     ) {
         return ResponseEntity.ok(roadmapService.getRoadmap(user.getId(), id));
+    }
+
+    /**
+     * Transitions a single task's status (Phase 11 - Progress Tracking).
+     * 404 if the roadmap or task doesn't exist or isn't owned by this user.
+     * May also flip the parent roadmap's own status - see
+     * {@link RoadmapService#updateTaskStatus}.
+     */
+    @PatchMapping("/{roadmapId}/tasks/{taskId}")
+    public ResponseEntity<RoadmapResponse.RoadmapTaskResponse> updateTaskStatus(
+            @AuthenticationPrincipal User user,
+            @PathVariable UUID roadmapId,
+            @PathVariable UUID taskId,
+            @Valid @RequestBody TaskStatusUpdateRequest request
+    ) {
+        RoadmapResponse.RoadmapTaskResponse response =
+                roadmapService.updateTaskStatus(user.getId(), roadmapId, taskId, request.status());
+        return ResponseEntity.ok(response);
     }
 }

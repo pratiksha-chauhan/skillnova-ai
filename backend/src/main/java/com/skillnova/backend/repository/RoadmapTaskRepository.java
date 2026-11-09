@@ -9,10 +9,20 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
 public interface RoadmapTaskRepository extends JpaRepository<RoadmapTask, UUID> {
+
+    /**
+     * Ownership-scoped single-task lookup for the Phase 11 status-update
+     * endpoint: returns empty (not just the task) when the task exists but
+     * belongs to a different roadmap or a different user's roadmap, so
+     * callers can return 404 without leaking whether the ID exists at all -
+     * same pattern as {@code RoadmapRepository.findByIdAndUser_Id}.
+     */
+    Optional<RoadmapTask> findByIdAndRoadmap_IdAndRoadmap_User_Id(UUID id, UUID roadmapId, UUID userId);
 
     /**
      * Per-roadmap, per-status task counts for every roadmap owned by the

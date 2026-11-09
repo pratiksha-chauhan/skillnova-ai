@@ -11,22 +11,27 @@ import com.skillnova.backend.entity.Difficulty;
 import com.skillnova.backend.entity.Priority;
 import com.skillnova.backend.entity.ProjectRecommendation;
 import com.skillnova.backend.entity.Roadmap;
+import com.skillnova.backend.entity.RoadmapStatus;
 import com.skillnova.backend.entity.RoadmapTask;
 import com.skillnova.backend.entity.SkillGap;
 import com.skillnova.backend.entity.SkillLevel;
+import com.skillnova.backend.entity.TaskStatus;
 import com.skillnova.backend.entity.TaskType;
 import com.skillnova.backend.entity.User;
 import com.skillnova.backend.exception.AiGenerationException;
 import com.skillnova.backend.exception.IncompleteProfileException;
 import com.skillnova.backend.exception.RoadmapNotFoundException;
+import com.skillnova.backend.exception.TaskNotFoundException;
 import com.skillnova.backend.exception.UserNotFoundException;
 import com.skillnova.backend.repository.RoadmapRepository;
+import com.skillnova.backend.repository.RoadmapTaskRepository;
 import com.skillnova.backend.repository.UserRepository;
 import com.skillnova.backend.util.SkillsCsvConverter;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -51,17 +56,20 @@ public class RoadmapService {
 
     private final UserRepository userRepository;
     private final RoadmapRepository roadmapRepository;
+    private final RoadmapTaskRepository roadmapTaskRepository;
     private final AiRoadmapProvider aiRoadmapProvider;
     private final ObjectMapper objectMapper;
 
     public RoadmapService(
             UserRepository userRepository,
             RoadmapRepository roadmapRepository,
+            RoadmapTaskRepository roadmapTaskRepository,
             AiRoadmapProvider aiRoadmapProvider,
             ObjectMapper objectMapper
     ) {
         this.userRepository = userRepository;
         this.roadmapRepository = roadmapRepository;
+        this.roadmapTaskRepository = roadmapTaskRepository;
         this.aiRoadmapProvider = aiRoadmapProvider;
         this.objectMapper = objectMapper;
     }
@@ -122,6 +130,54 @@ public class RoadmapService {
         Roadmap roadmap = roadmapRepository.findByIdAndUser_Id(roadmapId, userId)
                 .orElseThrow(() -> new RoadmapNotFoundException(roadmapId));
         return toRoadmapResponse(roadmap);
+    }
+
+    /**
+     * Transitions a single task's status (Phase 11). Any {@link TaskStatus}
+     * value may be requested from any current status - there is no
+     * enforced sequential path. {@code completedAt} is stamped when the
+     * task becomes {@code COMPLETED}, and cleared when it moves away from
+     * {@code COMPLETED}.
+     * <p>
+     * After saving the task, the parent roadmap's own status is
+     * auto-reconciled against its tasks: an {@code ACTIVE} roadmap flips to
+     * {@code COMPLETED} once every one of its tasks is {@code COMPLETED},
+     * and a {@code COMPLETED} roadmap flips back to {@code ACTIVE} the
+     * moment any task is no longer {@code COMPLETED} (e.g. the user
+     * un-checks something after finishing). {@code ARCHIVED} roadmaps are
+     * left untouched by task edits - archiving is a deliberate user action
+     * that task status changes should not silently undo.
+     */
+    @Transactional
+    public RoadmapResponse.RoadmapTaskResponse updateTaskStatus(UUID userId, UUID roadmapId, UUID taskId, TaskStatus newStatus) {
+        RoadmapTask task = roadmapTaskRepository.findByIdAndRoadmap_IdAndRoadmap_User_Id(taskId, roadmapId, userId)
+                .orElseThrow(() -> new TaskNotFoundException(taskId));
+
+        task.setStatus(newStatus);
+        task.setCompletedAt(newStatus == TaskStatus.COMPLETED ? Instant.now() : null);
+        RoadmapTask saved = roadmapTaskRepository.save(task);
+
+        reconcileRoadmapStatus(saved.getRoadmap());
+
+        return toTaskResponse(saved);
+    }
+
+    private void reconcileRoadmapStatus(Roadmap roadmap) {
+        if (roadmap.getStatus() == RoadmapStatus.ARCHIVED) {
+            return;
+        }
+
+        List<RoadmapTask> tasks = roadmap.getTasks();
+        boolean allCompleted = !tasks.isEmpty()
+                && tasks.stream().allMatch(t -> t.getStatus() == TaskStatus.COMPLETED);
+
+        if (allCompleted && roadmap.getStatus() != RoadmapStatus.COMPLETED) {
+            roadmap.setStatus(RoadmapStatus.COMPLETED);
+            roadmapRepository.save(roadmap);
+        } else if (!allCompleted && roadmap.getStatus() == RoadmapStatus.COMPLETED) {
+            roadmap.setStatus(RoadmapStatus.ACTIVE);
+            roadmapRepository.save(roadmap);
+        }
     }
 
     private static String firstNonBlank(String preferred, String fallback) {

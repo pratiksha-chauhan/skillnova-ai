@@ -7,12 +7,16 @@ import com.skillnova.backend.dto.RoadmapResponse;
 import com.skillnova.backend.dto.RoadmapSummaryResponse;
 import com.skillnova.backend.entity.Roadmap;
 import com.skillnova.backend.entity.RoadmapStatus;
+import com.skillnova.backend.entity.RoadmapTask;
+import com.skillnova.backend.entity.TaskStatus;
 import com.skillnova.backend.entity.User;
 import com.skillnova.backend.exception.AiGenerationException;
 import com.skillnova.backend.exception.IncompleteProfileException;
 import com.skillnova.backend.exception.RoadmapNotFoundException;
+import com.skillnova.backend.exception.TaskNotFoundException;
 import com.skillnova.backend.exception.UserNotFoundException;
 import com.skillnova.backend.repository.RoadmapRepository;
+import com.skillnova.backend.repository.RoadmapTaskRepository;
 import com.skillnova.backend.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,6 +45,9 @@ class RoadmapServiceTest {
 
     @Mock
     private RoadmapRepository roadmapRepository;
+
+    @Mock
+    private RoadmapTaskRepository roadmapTaskRepository;
 
     @Mock
     private AiRoadmapProvider aiRoadmapProvider;
@@ -114,7 +121,7 @@ class RoadmapServiceTest {
 
     @Test
     void generatesAndPersistsRoadmapUsingStoredProfileWhenRequestIsEmpty() {
-        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, roadmapTaskRepository, aiRoadmapProvider, objectMapper);
         UUID id = UUID.randomUUID();
         User user = fullProfileUser(id);
         when(userRepository.findById(id)).thenReturn(Optional.of(user));
@@ -145,7 +152,7 @@ class RoadmapServiceTest {
 
     @Test
     void requestFieldsOverrideStoredProfileFields() {
-        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, roadmapTaskRepository, aiRoadmapProvider, objectMapper);
         UUID id = UUID.randomUUID();
         User user = fullProfileUser(id);
         when(userRepository.findById(id)).thenReturn(Optional.of(user));
@@ -169,7 +176,7 @@ class RoadmapServiceTest {
 
     @Test
     void rejectsGenerationWhenTargetRoleMissingFromBothRequestAndProfile() {
-        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, roadmapTaskRepository, aiRoadmapProvider, objectMapper);
         UUID id = UUID.randomUUID();
         User user = fullProfileUser(id);
         user.setTargetRole(null);
@@ -184,7 +191,7 @@ class RoadmapServiceTest {
 
     @Test
     void rejectsGenerationWhenTargetTimelineMissingFromBothRequestAndProfile() {
-        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, roadmapTaskRepository, aiRoadmapProvider, objectMapper);
         UUID id = UUID.randomUUID();
         User user = fullProfileUser(id);
         user.setTargetTimelineMonths(null);
@@ -199,7 +206,7 @@ class RoadmapServiceTest {
 
     @Test
     void throwsUserNotFoundWhenUserDoesNotExist() {
-        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, roadmapTaskRepository, aiRoadmapProvider, objectMapper);
         UUID id = UUID.randomUUID();
         when(userRepository.findById(id)).thenReturn(Optional.empty());
 
@@ -209,7 +216,7 @@ class RoadmapServiceTest {
 
     @Test
     void rejectsPersistenceWhenAiReturnsAnUnrecognizedEnumValue() {
-        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, roadmapTaskRepository, aiRoadmapProvider, objectMapper);
         UUID id = UUID.randomUUID();
         User user = fullProfileUser(id);
         when(userRepository.findById(id)).thenReturn(Optional.of(user));
@@ -230,7 +237,7 @@ class RoadmapServiceTest {
 
     @Test
     void listsRoadmapsForUserNewestFirst() {
-        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, roadmapTaskRepository, aiRoadmapProvider, objectMapper);
         UUID userId = UUID.randomUUID();
         User user = fullProfileUser(userId);
         Roadmap roadmap = new Roadmap();
@@ -252,7 +259,7 @@ class RoadmapServiceTest {
 
     @Test
     void getRoadmapReturnsOwnershipScopedRoadmap() {
-        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, roadmapTaskRepository, aiRoadmapProvider, objectMapper);
         UUID userId = UUID.randomUUID();
         UUID roadmapId = UUID.randomUUID();
         User user = fullProfileUser(userId);
@@ -273,12 +280,106 @@ class RoadmapServiceTest {
 
     @Test
     void getRoadmapThrowsNotFoundWhenMissingOrNotOwned() {
-        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, roadmapTaskRepository, aiRoadmapProvider, objectMapper);
         UUID userId = UUID.randomUUID();
         UUID roadmapId = UUID.randomUUID();
         when(roadmapRepository.findByIdAndUser_Id(roadmapId, userId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> roadmapService.getRoadmap(userId, roadmapId))
                 .isInstanceOf(RoadmapNotFoundException.class);
+    }
+
+    private RoadmapTask taskWithStatus(Roadmap roadmap, TaskStatus status) {
+        RoadmapTask task = new RoadmapTask();
+        task.setId(UUID.randomUUID());
+        task.setRoadmap(roadmap);
+        task.setMonthNumber(1);
+        task.setTitle("Learn Kubernetes basics");
+        task.setTaskType(com.skillnova.backend.entity.TaskType.LEARNING);
+        task.setStatus(status);
+        task.setSortOrder(1);
+        roadmap.getTasks().add(task);
+        return task;
+    }
+
+    @Test
+    void updateTaskStatusThrowsNotFoundWhenMissingOrNotOwned() {
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, roadmapTaskRepository, aiRoadmapProvider, objectMapper);
+        UUID userId = UUID.randomUUID();
+        UUID roadmapId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        when(roadmapTaskRepository.findByIdAndRoadmap_IdAndRoadmap_User_Id(taskId, roadmapId, userId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> roadmapService.updateTaskStatus(userId, roadmapId, taskId, TaskStatus.IN_PROGRESS))
+                .isInstanceOf(TaskNotFoundException.class);
+
+        verify(roadmapTaskRepository, never()).save(any());
+    }
+
+    @Test
+    void updateTaskStatusStampsCompletedAtAndAutoCompletesRoadmapWhenAllTasksDone() {
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, roadmapTaskRepository, aiRoadmapProvider, objectMapper);
+        UUID userId = UUID.randomUUID();
+        UUID roadmapId = UUID.randomUUID();
+        Roadmap roadmap = new Roadmap();
+        roadmap.setId(roadmapId);
+        roadmap.setStatus(RoadmapStatus.ACTIVE);
+        RoadmapTask alreadyDone = taskWithStatus(roadmap, TaskStatus.COMPLETED);
+        RoadmapTask target = taskWithStatus(roadmap, TaskStatus.IN_PROGRESS);
+        when(roadmapTaskRepository.findByIdAndRoadmap_IdAndRoadmap_User_Id(target.getId(), roadmapId, userId))
+                .thenReturn(Optional.of(target));
+        when(roadmapTaskRepository.save(any(RoadmapTask.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        RoadmapResponse.RoadmapTaskResponse response =
+                roadmapService.updateTaskStatus(userId, roadmapId, target.getId(), TaskStatus.COMPLETED);
+
+        assertThat(response.status()).isEqualTo("COMPLETED");
+        assertThat(response.completedAt()).isNotNull();
+        assertThat(roadmap.getStatus()).isEqualTo(RoadmapStatus.COMPLETED);
+        verify(roadmapRepository).save(roadmap);
+        assertThat(alreadyDone.getStatus()).isEqualTo(TaskStatus.COMPLETED);
+    }
+
+    @Test
+    void updateTaskStatusClearsCompletedAtAndRevertsRoadmapToActiveWhenUncompleted() {
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, roadmapTaskRepository, aiRoadmapProvider, objectMapper);
+        UUID userId = UUID.randomUUID();
+        UUID roadmapId = UUID.randomUUID();
+        Roadmap roadmap = new Roadmap();
+        roadmap.setId(roadmapId);
+        roadmap.setStatus(RoadmapStatus.COMPLETED);
+        RoadmapTask target = taskWithStatus(roadmap, TaskStatus.COMPLETED);
+        target.setCompletedAt(Instant.now());
+        when(roadmapTaskRepository.findByIdAndRoadmap_IdAndRoadmap_User_Id(target.getId(), roadmapId, userId))
+                .thenReturn(Optional.of(target));
+        when(roadmapTaskRepository.save(any(RoadmapTask.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        RoadmapResponse.RoadmapTaskResponse response =
+                roadmapService.updateTaskStatus(userId, roadmapId, target.getId(), TaskStatus.IN_PROGRESS);
+
+        assertThat(response.status()).isEqualTo("IN_PROGRESS");
+        assertThat(response.completedAt()).isNull();
+        assertThat(roadmap.getStatus()).isEqualTo(RoadmapStatus.ACTIVE);
+        verify(roadmapRepository).save(roadmap);
+    }
+
+    @Test
+    void updateTaskStatusLeavesArchivedRoadmapStatusUntouched() {
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, roadmapTaskRepository, aiRoadmapProvider, objectMapper);
+        UUID userId = UUID.randomUUID();
+        UUID roadmapId = UUID.randomUUID();
+        Roadmap roadmap = new Roadmap();
+        roadmap.setId(roadmapId);
+        roadmap.setStatus(RoadmapStatus.ARCHIVED);
+        RoadmapTask target = taskWithStatus(roadmap, TaskStatus.PENDING);
+        when(roadmapTaskRepository.findByIdAndRoadmap_IdAndRoadmap_User_Id(target.getId(), roadmapId, userId))
+                .thenReturn(Optional.of(target));
+        when(roadmapTaskRepository.save(any(RoadmapTask.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        roadmapService.updateTaskStatus(userId, roadmapId, target.getId(), TaskStatus.COMPLETED);
+
+        assertThat(roadmap.getStatus()).isEqualTo(RoadmapStatus.ARCHIVED);
+        verify(roadmapRepository, never()).save(any());
     }
 }
