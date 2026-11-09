@@ -1,10 +1,18 @@
 package com.skillnova.backend.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skillnova.backend.dto.RoadmapAiResponse;
 import com.skillnova.backend.dto.RoadmapGenerationRequest;
+import com.skillnova.backend.dto.RoadmapResponse;
+import com.skillnova.backend.dto.RoadmapSummaryResponse;
+import com.skillnova.backend.entity.Roadmap;
+import com.skillnova.backend.entity.RoadmapStatus;
 import com.skillnova.backend.entity.User;
+import com.skillnova.backend.exception.AiGenerationException;
 import com.skillnova.backend.exception.IncompleteProfileException;
+import com.skillnova.backend.exception.RoadmapNotFoundException;
 import com.skillnova.backend.exception.UserNotFoundException;
+import com.skillnova.backend.repository.RoadmapRepository;
 import com.skillnova.backend.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,7 +40,12 @@ class RoadmapServiceTest {
     private UserRepository userRepository;
 
     @Mock
+    private RoadmapRepository roadmapRepository;
+
+    @Mock
     private AiRoadmapProvider aiRoadmapProvider;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     private RoadmapService roadmapService;
 
@@ -53,37 +66,91 @@ class RoadmapServiceTest {
                 .build();
     }
 
-    private RoadmapAiResponse stubbedAiResponse() {
-        return new RoadmapAiResponse("summary", List.of(), List.of(), List.of(), List.of());
+    private RoadmapAiResponse fullAiResponse() {
+        return new RoadmapAiResponse(
+                "Become a Staff Engineer in 12 months",
+                List.of(new RoadmapAiResponse.SkillGapAi("Kubernetes", "BEGINNER", "ADVANCED", "HIGH")),
+                List.of(new RoadmapAiResponse.RoadmapTaskAi(1, 1, "Learn Kubernetes basics", "desc", "LEARNING", 1)),
+                List.of(new RoadmapAiResponse.CertificationAi("CKA", "Linux Foundation", "https://cka.example", "MEDIUM")),
+                List.of(new RoadmapAiResponse.ProjectAi("Deploy a microservice", "desc", "INTERMEDIATE", "Java, Kubernetes"))
+        );
+    }
+
+    // Returns whatever Roadmap entity was passed to save(), simulating the
+    // DB assigning @PrePersist defaults (id/timestamps/status) without a
+    // real Hibernate session.
+    private void stubSaveReturnsSameEntityWithDefaults() {
+        when(roadmapRepository.save(any(Roadmap.class))).thenAnswer(invocation -> {
+            Roadmap roadmap = invocation.getArgument(0);
+            if (roadmap.getId() == null) {
+                roadmap.setId(UUID.randomUUID());
+            }
+            if (roadmap.getStatus() == null) {
+                roadmap.setStatus(RoadmapStatus.ACTIVE);
+            }
+            Instant now = Instant.now();
+            roadmap.setCreatedAt(now);
+            roadmap.setUpdatedAt(now);
+            roadmap.getTasks().forEach(t -> {
+                t.setId(UUID.randomUUID());
+                t.setCreatedAt(now);
+                t.setUpdatedAt(now);
+            });
+            roadmap.getSkillGaps().forEach(s -> {
+                s.setId(UUID.randomUUID());
+                s.setCreatedAt(now);
+            });
+            roadmap.getCertifications().forEach(c -> {
+                c.setId(UUID.randomUUID());
+                c.setCreatedAt(now);
+            });
+            roadmap.getProjects().forEach(p -> {
+                p.setId(UUID.randomUUID());
+                p.setCreatedAt(now);
+            });
+            return roadmap;
+        });
     }
 
     @Test
-    void generatesRoadmapUsingStoredProfileWhenRequestIsEmpty() {
-        roadmapService = new RoadmapService(userRepository, aiRoadmapProvider);
+    void generatesAndPersistsRoadmapUsingStoredProfileWhenRequestIsEmpty() {
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
         UUID id = UUID.randomUUID();
         User user = fullProfileUser(id);
         when(userRepository.findById(id)).thenReturn(Optional.of(user));
-        when(aiRoadmapProvider.generateRoadmap(any())).thenReturn(stubbedAiResponse());
+        when(aiRoadmapProvider.generateRoadmap(any())).thenReturn(fullAiResponse());
+        stubSaveReturnsSameEntityWithDefaults();
 
-        RoadmapAiResponse response = roadmapService.generateRoadmap(id, RoadmapGenerationRequest.EMPTY);
+        RoadmapResponse response = roadmapService.generateRoadmap(id, RoadmapGenerationRequest.EMPTY);
 
-        assertThat(response.summary()).isEqualTo("summary");
+        assertThat(response.id()).isNotNull();
+        assertThat(response.status()).isEqualTo("ACTIVE");
+        assertThat(response.summary()).isEqualTo("Become a Staff Engineer in 12 months");
+        assertThat(response.skillGaps()).hasSize(1);
+        assertThat(response.skillGaps().get(0).skillName()).isEqualTo("Kubernetes");
+        assertThat(response.skillGaps().get(0).priority()).isEqualTo("HIGH");
+        assertThat(response.tasks()).hasSize(1);
+        assertThat(response.tasks().get(0).status()).isEqualTo("PENDING");
+        assertThat(response.certifications()).hasSize(1);
+        assertThat(response.projects()).hasSize(1);
 
-        ArgumentCaptor<RoadmapPromptContext> captor = ArgumentCaptor.forClass(RoadmapPromptContext.class);
-        verify(aiRoadmapProvider).generateRoadmap(captor.capture());
-        RoadmapPromptContext context = captor.getValue();
-        assertThat(context.targetRole()).isEqualTo("Staff Engineer");
-        assertThat(context.targetTimelineMonths()).isEqualTo(12);
-        assertThat(context.currentSkills()).containsExactly("Java", "Spring Boot");
+        ArgumentCaptor<Roadmap> captor = ArgumentCaptor.forClass(Roadmap.class);
+        verify(roadmapRepository).save(captor.capture());
+        Roadmap persisted = captor.getValue();
+        assertThat(persisted.getUser()).isEqualTo(user);
+        assertThat(persisted.getTargetRole()).isEqualTo("Staff Engineer");
+        assertThat(persisted.getTargetTimelineMonths()).isEqualTo(12);
+        assertThat(persisted.getRawAiResponse()).contains("Kubernetes");
     }
 
     @Test
     void requestFieldsOverrideStoredProfileFields() {
-        roadmapService = new RoadmapService(userRepository, aiRoadmapProvider);
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
         UUID id = UUID.randomUUID();
         User user = fullProfileUser(id);
         when(userRepository.findById(id)).thenReturn(Optional.of(user));
-        when(aiRoadmapProvider.generateRoadmap(any())).thenReturn(stubbedAiResponse());
+        when(aiRoadmapProvider.generateRoadmap(any())).thenReturn(fullAiResponse());
+        stubSaveReturnsSameEntityWithDefaults();
 
         RoadmapGenerationRequest request = new RoadmapGenerationRequest(
                 "Principal Engineer", null, null, List.of("Kubernetes"), null, 18);
@@ -102,7 +169,7 @@ class RoadmapServiceTest {
 
     @Test
     void rejectsGenerationWhenTargetRoleMissingFromBothRequestAndProfile() {
-        roadmapService = new RoadmapService(userRepository, aiRoadmapProvider);
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
         UUID id = UUID.randomUUID();
         User user = fullProfileUser(id);
         user.setTargetRole(null);
@@ -112,11 +179,12 @@ class RoadmapServiceTest {
                 .isInstanceOf(IncompleteProfileException.class);
 
         verify(aiRoadmapProvider, never()).generateRoadmap(any());
+        verify(roadmapRepository, never()).save(any());
     }
 
     @Test
     void rejectsGenerationWhenTargetTimelineMissingFromBothRequestAndProfile() {
-        roadmapService = new RoadmapService(userRepository, aiRoadmapProvider);
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
         UUID id = UUID.randomUUID();
         User user = fullProfileUser(id);
         user.setTargetTimelineMonths(null);
@@ -126,15 +194,91 @@ class RoadmapServiceTest {
                 .isInstanceOf(IncompleteProfileException.class);
 
         verify(aiRoadmapProvider, never()).generateRoadmap(any());
+        verify(roadmapRepository, never()).save(any());
     }
 
     @Test
     void throwsUserNotFoundWhenUserDoesNotExist() {
-        roadmapService = new RoadmapService(userRepository, aiRoadmapProvider);
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
         UUID id = UUID.randomUUID();
         when(userRepository.findById(id)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> roadmapService.generateRoadmap(id, RoadmapGenerationRequest.EMPTY))
                 .isInstanceOf(UserNotFoundException.class);
+    }
+
+    @Test
+    void rejectsPersistenceWhenAiReturnsAnUnrecognizedEnumValue() {
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
+        UUID id = UUID.randomUUID();
+        User user = fullProfileUser(id);
+        when(userRepository.findById(id)).thenReturn(Optional.of(user));
+        RoadmapAiResponse badResponse = new RoadmapAiResponse(
+                "summary",
+                List.of(new RoadmapAiResponse.SkillGapAi("Kubernetes", "NOVICE", "ADVANCED", "HIGH")),
+                List.of(),
+                List.of(),
+                List.of()
+        );
+        when(aiRoadmapProvider.generateRoadmap(any())).thenReturn(badResponse);
+
+        assertThatThrownBy(() -> roadmapService.generateRoadmap(id, RoadmapGenerationRequest.EMPTY))
+                .isInstanceOf(AiGenerationException.class);
+
+        verify(roadmapRepository, never()).save(any());
+    }
+
+    @Test
+    void listsRoadmapsForUserNewestFirst() {
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
+        UUID userId = UUID.randomUUID();
+        User user = fullProfileUser(userId);
+        Roadmap roadmap = new Roadmap();
+        roadmap.setId(UUID.randomUUID());
+        roadmap.setUser(user);
+        roadmap.setTargetRole("Staff Engineer");
+        roadmap.setStatus(RoadmapStatus.ACTIVE);
+        roadmap.setTargetTimelineMonths(12);
+        roadmap.setCreatedAt(Instant.now());
+        roadmap.setUpdatedAt(Instant.now());
+        when(roadmapRepository.findAllByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(List.of(roadmap));
+
+        List<RoadmapSummaryResponse> result = roadmapService.listRoadmaps(userId);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).targetRole()).isEqualTo("Staff Engineer");
+        assertThat(result.get(0).status()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void getRoadmapReturnsOwnershipScopedRoadmap() {
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
+        UUID userId = UUID.randomUUID();
+        UUID roadmapId = UUID.randomUUID();
+        User user = fullProfileUser(userId);
+        Roadmap roadmap = new Roadmap();
+        roadmap.setId(roadmapId);
+        roadmap.setUser(user);
+        roadmap.setTargetRole("Staff Engineer");
+        roadmap.setStatus(RoadmapStatus.ACTIVE);
+        roadmap.setCreatedAt(Instant.now());
+        roadmap.setUpdatedAt(Instant.now());
+        when(roadmapRepository.findByIdAndUser_Id(roadmapId, userId)).thenReturn(Optional.of(roadmap));
+
+        RoadmapResponse response = roadmapService.getRoadmap(userId, roadmapId);
+
+        assertThat(response.id()).isEqualTo(roadmapId);
+        assertThat(response.targetRole()).isEqualTo("Staff Engineer");
+    }
+
+    @Test
+    void getRoadmapThrowsNotFoundWhenMissingOrNotOwned() {
+        roadmapService = new RoadmapService(userRepository, roadmapRepository, aiRoadmapProvider, objectMapper);
+        UUID userId = UUID.randomUUID();
+        UUID roadmapId = UUID.randomUUID();
+        when(roadmapRepository.findByIdAndUser_Id(roadmapId, userId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> roadmapService.getRoadmap(userId, roadmapId))
+                .isInstanceOf(RoadmapNotFoundException.class);
     }
 }
