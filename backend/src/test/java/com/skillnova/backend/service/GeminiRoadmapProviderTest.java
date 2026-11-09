@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class GeminiRoadmapProviderTest {
 
     private static final String BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
-    private static final String MODEL = "gemini-2.0-flash";
+    private static final String MODEL = "gemini-3.8-flash";
 
     private RoadmapPromptContext sampleContext() {
         return new RoadmapPromptContext(
@@ -41,7 +41,7 @@ class GeminiRoadmapProviderTest {
     }
 
     private GeminiRoadmapProvider buildProvider(RestClient.Builder builder) {
-        return new GeminiRoadmapProvider(builder, new ObjectMapper(), BASE_URL, "test-api-key", MODEL, 5_000L);
+        return new GeminiRoadmapProvider(builder, new ObjectMapper(), BASE_URL, "test-api-key", MODEL);
     }
 
     private String wrapAsGeminiResponse(String innerJson) {
@@ -162,7 +162,7 @@ class GeminiRoadmapProviderTest {
     void constructorRejectsABlankApiKey() {
         RestClient.Builder builder = RestClient.builder();
         assertThatThrownBy(() -> new GeminiRoadmapProvider(
-                builder, new ObjectMapper(), BASE_URL, "", MODEL, 5_000L))
+                builder, new ObjectMapper(), BASE_URL, "", MODEL))
                 .isInstanceOf(IllegalStateException.class);
     }
 }

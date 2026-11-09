@@ -6,17 +6,14 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skillnova.backend.dto.RoadmapAiResponse;
 import com.skillnova.backend.exception.AiGenerationException;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.web.client.ClientHttpRequestFactories;
-import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 import java.math.BigDecimal;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -39,12 +36,11 @@ public class GeminiRoadmapProvider implements AiRoadmapProvider {
     private final String model;
 
     public GeminiRoadmapProvider(
-            RestClient.Builder restClientBuilder,
+            @Qualifier("geminiRestClientBuilder") RestClient.Builder restClientBuilder,
             ObjectMapper objectMapper,
             @Value("${gemini.base-url}") String baseUrl,
             @Value("${gemini.api-key}") String apiKey,
-            @Value("${gemini.model}") String model,
-            @Value("${gemini.timeout-ms}") long timeoutMs
+            @Value("${gemini.model}") String model
     ) {
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException(
@@ -56,17 +52,9 @@ public class GeminiRoadmapProvider implements AiRoadmapProvider {
                 // Header form keeps the key out of URLs (and therefore out of
                 // access logs), unlike the alternative ?key= query param.
                 .defaultHeader("x-goog-api-key", apiKey)
-                .requestFactory(timeoutAwareRequestFactory(timeoutMs))
                 .build();
         this.objectMapper = objectMapper;
         this.model = model;
-    }
-
-    private static ClientHttpRequestFactory timeoutAwareRequestFactory(long timeoutMs) {
-        ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.DEFAULTS
-                .withConnectTimeout(Duration.ofMillis(timeoutMs))
-                .withReadTimeout(Duration.ofMillis(timeoutMs));
-        return ClientHttpRequestFactories.get(settings);
     }
 
     @Override
