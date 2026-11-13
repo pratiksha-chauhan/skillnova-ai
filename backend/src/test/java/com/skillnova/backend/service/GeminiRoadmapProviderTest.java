@@ -41,7 +41,14 @@ class GeminiRoadmapProviderTest {
     }
 
     private GeminiRoadmapProvider buildProvider(RestClient.Builder builder) {
-        return new GeminiRoadmapProvider(builder, new ObjectMapper(), BASE_URL, "test-api-key", MODEL);
+        return buildProvider(builder, 1);
+    }
+
+    private GeminiRoadmapProvider buildProvider(RestClient.Builder builder, int maxAttempts) {
+        // 1ms backoff keeps retry-path tests fast; real deployments use the
+        // configured gemini.retry.* defaults (1s/8s).
+        return new GeminiRoadmapProvider(
+                builder, new ObjectMapper(), BASE_URL, "test-api-key", MODEL, maxAttempts, 1, 1);
     }
 
     private String wrapAsGeminiResponse(String innerJson) {
@@ -149,20 +156,69 @@ class GeminiRoadmapProviderTest {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
 
+        // 400 is not in the retryable status set, so this should fail on the
+        // first attempt without the provider retrying.
         server.expect(MockRestRequestMatchers.anything())
-                .andRespond(MockRestResponseCreators.withServerError());
+                .andRespond(MockRestResponseCreators.withBadRequest());
 
-        GeminiRoadmapProvider provider = buildProvider(builder);
+        GeminiRoadmapProvider provider = buildProvider(builder, 3);
 
         assertThatThrownBy(() -> provider.generateRoadmap(sampleContext()))
                 .isInstanceOf(AiGenerationException.class);
+
+        server.verify();
+    }
+
+    @Test
+    void retriesOnTransientServerErrorAndSucceeds() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+
+        String innerJson = "{\"summary\":\"recovered\",\"skillGaps\":[],\"tasks\":[],\"certifications\":[],\"projects\":[]}";
+
+        // First two attempts return 503 (transient/overloaded); the third succeeds.
+        server.expect(MockRestRequestMatchers.anything())
+                .andRespond(MockRestResponseCreators.withStatus(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                        .body("{\"error\":\"overloaded\"}"));
+        server.expect(MockRestRequestMatchers.anything())
+                .andRespond(MockRestResponseCreators.withStatus(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                        .body("{\"error\":\"overloaded\"}"));
+        server.expect(MockRestRequestMatchers.anything())
+                .andRespond(MockRestResponseCreators.withSuccess(
+                        wrapAsGeminiResponse(innerJson), MediaType.APPLICATION_JSON));
+
+        GeminiRoadmapProvider provider = buildProvider(builder, 3);
+        RoadmapAiResponse response = provider.generateRoadmap(sampleContext());
+
+        assertThat(response.summary()).isEqualTo("recovered");
+        server.verify();
+    }
+
+    @Test
+    void givesUpAfterExhaustingRetriesOnRepeatedTransientErrors() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+
+        for (int i = 0; i < 3; i++) {
+            server.expect(MockRestRequestMatchers.anything())
+                    .andRespond(MockRestResponseCreators.withStatus(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                            .body("{\"error\":\"overloaded\"}"));
+        }
+
+        GeminiRoadmapProvider provider = buildProvider(builder, 3);
+
+        assertThatThrownBy(() -> provider.generateRoadmap(sampleContext()))
+                .isInstanceOf(AiGenerationException.class)
+                .hasMessageContaining("after 3 attempts");
+
+        server.verify();
     }
 
     @Test
     void constructorRejectsABlankApiKey() {
         RestClient.Builder builder = RestClient.builder();
         assertThatThrownBy(() -> new GeminiRoadmapProvider(
-                builder, new ObjectMapper(), BASE_URL, "", MODEL))
+                builder, new ObjectMapper(), BASE_URL, "", MODEL, 1, 1, 1))
                 .isInstanceOf(IllegalStateException.class);
     }
 }
