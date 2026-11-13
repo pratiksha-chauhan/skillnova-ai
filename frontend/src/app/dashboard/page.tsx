@@ -104,6 +104,9 @@ function DashboardContent({ data }: { data: DashboardResponse }) {
                         progress and stats will show up here.
                     </CardDescription>
                 </CardHeader>
+                <CardContent>
+                    <Button render={<Link href="/roadmap/new" />}>Generate a roadmap</Button>
+                </CardContent>
             </Card>
         );
     }
@@ -160,7 +163,12 @@ function DashboardContent({ data }: { data: DashboardResponse }) {
             </section>
 
             <section>
-                <h2 className="mb-3 text-lg font-semibold">Your roadmaps</h2>
+                <div className="mb-3 flex items-center justify-between">
+                    <h2 className="text-lg font-semibold">Your roadmaps</h2>
+                    <Button size="sm" render={<Link href="/roadmap/new" />}>
+                        Generate new roadmap
+                    </Button>
+                </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     {data.roadmaps.map((roadmap) => (
                         <Link key={roadmap.roadmapId} href={`/roadmap/${roadmap.roadmapId}`}>

@@ -2,9 +2,7 @@
  * Mirrors backend `com.skillnova.backend.dto.RoadmapSummaryResponse` and
  * `RoadmapResponse` - the roadmap listing row and full roadmap detail
  * shapes returned by `GET /api/roadmap` and `GET /api/roadmap/{id}`
- * respectively. The full Roadmap UI (cards, task checklists, skill gaps,
- * certs/projects) is built out in Phase 15; this phase only needs enough
- * of the shape to back a thin placeholder detail page.
+ * respectively.
  */
 export interface RoadmapSummaryResponse {
     id: string;
@@ -15,6 +13,19 @@ export interface RoadmapSummaryResponse {
     updatedAt: string;
 }
 
+/** The three valid values of backend `TaskStatus` - every task can be set to any of them, in any order. */
+export type TaskStatusValue = "PENDING" | "IN_PROGRESS" | "COMPLETED";
+
+/** Mirrors `com.skillnova.backend.dto.RoadmapGenerationRequest` - every field optional. */
+export interface RoadmapGenerationRequest {
+    targetRole?: string;
+    currentJobRole?: string;
+    yearsExperience?: number;
+    currentSkills?: string[];
+    dailyStudyHours?: number;
+    targetTimelineMonths?: number;
+}
+
 export interface RoadmapTaskResponse {
     id: string;
     monthNumber: number | null;
@@ -22,7 +33,7 @@ export interface RoadmapTaskResponse {
     title: string;
     description: string;
     taskType: string;
-    status: string;
+    status: TaskStatusValue;
     sortOrder: number | null;
     completedAt: string | null;
 }
