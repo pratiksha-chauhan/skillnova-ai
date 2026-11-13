@@ -10,10 +10,12 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StreamUtils;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -61,16 +63,36 @@ public class GeminiRoadmapProvider implements AiRoadmapProvider {
     public RoadmapAiResponse generateRoadmap(RoadmapPromptContext context) {
         String prompt = buildPrompt(context);
 
-        GeminiGenerateContentResponse response;
+        String rawBody;
         try {
-            response = restClient.post()
+            // Read via exchange()+raw InputStream (not retrieve().body(...)) because
+            // Gemini sometimes returns Content-Type: application/octet-stream instead
+            // of application/json/text, and Spring's HttpMessageConverter lookup -
+            // used by both GeminiGenerateContentResponse.class and String.class -
+            // rejects that content type outright. exchange() bypasses converter
+            // selection entirely, so the body is read as raw bytes regardless of the
+            // declared Content-Type; it's parsed manually below.
+            rawBody = restClient.post()
                     .uri("/models/{model}:generateContent", model)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(buildRequestBody(prompt))
-                    .retrieve()
-                    .body(GeminiGenerateContentResponse.class);
+                    .exchange((request, response) -> {
+                        String body = StreamUtils.copyToString(response.getBody(), StandardCharsets.UTF_8);
+                        if (response.getStatusCode().isError()) {
+                            throw new AiGenerationException(
+                                    "Gemini API returned HTTP " + response.getStatusCode().value() + ": " + body);
+                        }
+                        return body;
+                    });
         } catch (RestClientException e) {
             throw new AiGenerationException("Gemini API call failed: " + e.getMessage(), e);
+        }
+
+        GeminiGenerateContentResponse response;
+        try {
+            response = objectMapper.readValue(rawBody, GeminiGenerateContentResponse.class);
+        } catch (JsonProcessingException e) {
+            throw new AiGenerationException("Gemini response envelope was not valid JSON", e);
         }
 
         String text = extractText(response);
